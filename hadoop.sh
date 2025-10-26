@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #=============================================================================
-# Hadoop 集群自动部署脚本 (虚拟机版本) - 完全修复版
+# Hadoop 集群自动部署脚本
 # 适用于: Ubuntu 24.04 + Hadoop 3.4.2 + OpenJDK 17
 # 使用方法: bash hadoop_deploy.sh
 #=============================================================================
@@ -95,7 +95,7 @@ ask_user_choice() {
   echo -e "${YELLOW}$prompt${NC}"
   echo "  1) 重新执行 (reinstall)"
   echo "  2) 跳过此步骤 (skip)"
-  echo "  3) 退出脚本，手动调试 (exit)"
+  echo "  3) 退出脚本 (exit)"
 }
 
 # 显示进度条
@@ -221,8 +221,8 @@ stop_cluster() {
   exec_remote "$MASTER_IP" "
 export JAVA_HOME=/usr/lib/jvm/jdk-17.0.12-oracle-x64
 export HADOOP_HOME=/usr/local/hadoop
-export HADOOP_CONF_DIR=\$HADOOP_HOME/etc/hadoop
-export PATH=\$PATH:\$JAVA_HOME/bin:\$HADOOP_HOME/bin:\$HADOOP_HOME/sbin
+export HADOOP_CONF_DIR=\\\$HADOOP_HOME/etc/hadoop
+export PATH=\\\$PATH:\\\$JAVA_HOME/bin:\\\$HADOOP_HOME/bin:\\\$HADOOP_HOME/sbin
 source ~/.bashrc && mapred --daemon stop historyserver
 " "$HADOOP_USER" "$HADOOP_PASSWORD" 2>/dev/null || true
 
@@ -232,8 +232,8 @@ source ~/.bashrc && mapred --daemon stop historyserver
   exec_remote "$MASTER_IP" "
 export JAVA_HOME=/usr/lib/jvm/jdk-17.0.12-oracle-x64
 export HADOOP_HOME=/usr/local/hadoop
-export HADOOP_CONF_DIR=\$HADOOP_HOME/etc/hadoop
-export PATH=\$PATH:\$JAVA_HOME/bin:\$HADOOP_HOME/bin:\$HADOOP_HOME/sbin
+export HADOOP_CONF_DIR=\\\$HADOOP_HOME/etc/hadoop
+export PATH=\\\$PATH:\\\$JAVA_HOME/bin:\\\$HADOOP_HOME/bin:\\\$HADOOP_HOME/sbin
 source ~/.bashrc && stop-yarn.sh
 " "$HADOOP_USER" "$HADOOP_PASSWORD" 2>/dev/null || true
 
@@ -243,8 +243,8 @@ source ~/.bashrc && stop-yarn.sh
   exec_remote "$MASTER_IP" "
 export JAVA_HOME=/usr/lib/jvm/jdk-17.0.12-oracle-x64
 export HADOOP_HOME=/usr/local/hadoop
-export HADOOP_CONF_DIR=\$HADOOP_HOME/etc/hadoop
-export PATH=\$PATH:\$JAVA_HOME/bin:\$HADOOP_HOME/bin:\$HADOOP_HOME/sbin
+export HADOOP_CONF_DIR=\\\$HADOOP_HOME/etc/hadoop
+export PATH=\\\$PATH:\\\$JAVA_HOME/bin:\\\$HADOOP_HOME/bin:\\\$HADOOP_HOME/sbin
 source ~/.bashrc && stop-dfs.sh
 " "$HADOOP_USER" "$HADOOP_PASSWORD" 2>/dev/null || true
 
@@ -321,7 +321,7 @@ collect_cluster_info() {
 
   # 选择起始步骤
   echo -e "\n${YELLOW}=== 选择操作模式 ===${NC}"
-  echo "  ${GREEN}部署相关:${NC}"
+  echo -e "  ${GREEN}部署相关:${NC}"
   echo "    1) 从头开始完整部署"
   echo "    2) 检查节点连接性"
   echo "    3) 配置节点基础环境"
@@ -332,8 +332,6 @@ collect_cluster_info() {
   echo "    8) 分发Hadoop到Slave节点"
   echo "    9) 启动集群"
   echo "    10) 验证集群状态"
-  echo ""
-  echo "  ${RED}管理相关:${NC}"
   echo "    11) 停止集群"
   echo "    12) 清理并重置环境变量"
   echo "    0) 退出脚本"
@@ -559,7 +557,7 @@ configure_single_node() {
 
     if [[ ! -f "$jdk_file" ]]; then
       print_error "$node_label 未找到 JDK 安装包: $jdk_file"
-      print_error "请下载 jdk-17.0.12_linux-x64_bin.deb 并放在脚本同目录下"
+      print_error "请下载 jdk-17.0.12_linux-x64_bin.deb 并放在脚本同目录下，或手动安装"
       exit 1
     fi
 
@@ -663,7 +661,7 @@ configure_all_nodes() {
 }
 
 #=============================================================================
-# 配置hosts文件 (修复版)
+# 配置hosts文件
 #=============================================================================
 
 configure_hosts_file() {
@@ -1384,12 +1382,14 @@ main() {
   echo -e "${GREEN}"
   cat <<"EOF"
     ╔═══════════════════════════════════════════════════════════╗
-    ║     Hadoop 集群自动部署脚本 - 完全修复版                   ║
+    ║     Hadoop 集群自动部署脚本                               ║
     ║     Hadoop 3.4.2 + Ubuntu 24.04 + OracleJDK 17            ║
     ╚═══════════════════════════════════════════════════════════╝
 EOF
   echo -e "${NC}"
 
+  print_warning "请确保所有主机都安装好了openssh-server"
+  print_warning "该脚本只允许虚拟机环境，因为密码将明文存储"
   # 检查必要工具
   print_info "检查必要工具..."
   if ! command -v sshpass &>/dev/null; then
