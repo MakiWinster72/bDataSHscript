@@ -17,6 +17,9 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # 全局变量
+JAVA_HOME=/usr/lib/jvm/jdk-17.0.12-oracle-x64
+HADOOP_HOME=/usr/local/hadoop
+HADOOP_CONF_DIR=$HADOOP_HOME/etc/hadoop
 HADOOP_VERSION="3.4.2"
 HADOOP_USER="hadoop"
 HADOOP_PASSWORD=""
@@ -375,8 +378,27 @@ configure_single_node() {
     exec_remote "$node_ip" "sudo dpkg -i /tmp/jdk-17.0.12_linux-x64_bin.deb" "$HADOOP_USER" "$HADOOP_PASSWORD"
 
     print_info "$node_label 配置 JDK 环境变量..."
-    exec_remote "$node_ip" "grep -q 'JAVA_HOME.*jdk-17' ~/.bashrc || echo 'export JAVA_HOME=/usr/lib/jvm/jdk-17.0.12-oracle-x64' >> ~/.bashrc" "$HADOOP_USER" "$HADOOP_PASSWORD"
-    exec_remote "$node_ip" "grep -q 'PATH.*JAVA_HOME' ~/.bashrc || echo 'export PATH=\$PATH:\$JAVA_HOME/bin' >> ~/.bashrc" "$HADOOP_USER" "$HADOOP_PASSWORD"
+
+    # 检测远程 shell
+    exec_remote "$node_ip" "
+SHELL_RC=\$HOME/.bashrc
+if [ -n \"\$ZSH_VERSION\" ]; then
+  SHELL_RC=\$HOME/.zshrc
+fi
+
+# 删除旧的 JAVA_HOME 和 PATH 配置
+sed -i '/export JAVA_HOME.*jdk-17/d' \"\$SHELL_RC\"
+sed -i '/export PATH=.*JAVA_HOME/d' \"\$SHELL_RC\"
+
+# 添加新的 JAVA_HOME 和 PATH
+echo 'export JAVA_HOME=/usr/lib/jvm/jdk-17.0.12-oracle-x64' >> \"\$SHELL_RC\"
+echo 'export PATH=\$PATH:\$JAVA_HOME/bin' >> \"\$SHELL_RC\"
+
+# 立即生效
+source \"\$SHELL_RC\"
+export JAVA_HOME=/usr/lib/jvm/jdk-17.0.12-oracle-x64
+export PATH=\$PATH:\$JAVA_HOME/bin
+" "$HADOOP_USER" "$HADOOP_PASSWORD"
 
     print_success "$node_label JDK 安装完成"
   fi
@@ -620,12 +642,35 @@ install_hadoop() {
   exec_remote "$MASTER_IP" "sudo chown -R $HADOOP_USER:$HADOOP_USER /usr/local/hadoop" "$HADOOP_USER" "$HADOOP_PASSWORD"
 
   print_info "配置 Hadoop 环境变量"
-  exec_remote "$MASTER_IP" "grep -q 'HADOOP_HOME' ~/.bashrc || cat >> ~/.bashrc << 'ENVEOF'
+
+  exec_remote "$MASTER_IP" "
+# 自动检测 shell 配置文件
+SHELL_RC=\$HOME/.bashrc
+if [ -n \"\$ZSH_VERSION\" ]; then
+  SHELL_RC=\$HOME/.zshrc
+fi
+
+# 删除旧的 JAVA_HOME、HADOOP_HOME 和 PATH 配置
+sed -i '/export JAVA_HOME/d' \"\$SHELL_RC\"
+sed -i '/export HADOOP_HOME/d' \"\$SHELL_RC\"
+sed -i '/PATH=.*HADOOP_HOME/d' \"\$SHELL_RC\"
+sed -i '/export HADOOP_CONF_DIR/d' \"\$SHELL_RC\"
+
+# 添加新的环境变量
+cat >> \"\$SHELL_RC\" << 'ENVEOF'
 export JAVA_HOME=/usr/lib/jvm/jdk-17.0.12-oracle-x64
 export HADOOP_HOME=/usr/local/hadoop
 export PATH=\$PATH:\$HADOOP_HOME/bin:\$HADOOP_HOME/sbin
 export HADOOP_CONF_DIR=\$HADOOP_HOME/etc/hadoop
-ENVEOF" "$HADOOP_USER" "$HADOOP_PASSWORD"
+ENVEOF
+
+# 立即生效
+source \"\$SHELL_RC\"
+export JAVA_HOME=/usr/lib/jvm/jdk-17.0.12-oracle-x64
+export HADOOP_HOME=/usr/local/hadoop
+export PATH=\$PATH:\$HADOOP_HOME/bin:\$HADOOP_HOME/sbin
+export HADOOP_CONF_DIR=\$HADOOP_HOME/etc/hadoop
+" "$HADOOP_USER" "$HADOOP_PASSWORD"
 
   print_success "Hadoop 安装完成"
 }
@@ -791,31 +836,30 @@ XMLEOF
 distribute_hadoop() {
   print_step "步骤 8: 分发 Hadoop 到所有 Slave 节点"
 
-  print_info "在 Master 节点打包 Hadoop"
-  exec_remote "$MASTER_IP" "cd /usr/local && tar -zcf /tmp/hadoop.tar.gz hadoop" "$HADOOP_USER" "$HADOOP_PASSWORD"
-
   local total_slaves=$SLAVE_COUNT
   local current=0
+
+  # 先在 Master 上打包 Hadoop
+  tar -czf /tmp/hadoop.tar.gz -C /usr/local hadoop
 
   for i in $(seq 0 $((SLAVE_COUNT - 1))); do
     current=$((current + 1))
     show_progress $current $total_slaves "分发到 ${SLAVE_HOSTNAMES[$i]}"
 
-    # 检查目标节点是否已有Hadoop
-    local slave_has_hadoop=$(sshpass -p "$HADOOP_PASSWORD" ssh -o StrictHostKeyChecking=no ${HADOOP_USER}@${SLAVE_IPS[$i]} \
-      "[ -d /usr/local/hadoop ] && echo 'yes' || echo 'no'")
+    # 删除目标节点已有 Hadoop（可选）
+    exec_remote "${SLAVE_IPS[$i]}" "sudo rm -rf /usr/local/hadoop" "$HADOOP_USER" "$HADOOP_PASSWORD"
 
-    if [[ "$slave_has_hadoop" == "yes" ]]; then
-      exec_remote "${SLAVE_IPS[$i]}" "rm -rf /usr/local/hadoop" "$HADOOP_USER" "$HADOOP_PASSWORD"
-    fi
+    # 上传压缩包
+    sshpass -p "$HADOOP_PASSWORD" scp -o StrictHostKeyChecking=no /tmp/hadoop.tar.gz "$HADOOP_USER@${SLAVE_IPS[$i]}:/tmp/"
 
-    # 使用 Master 上的 hadoop 用户直接 scp
-    exec_remote "$MASTER_IP" "scp -o StrictHostKeyChecking=no /tmp/hadoop.tar.gz ${SLAVE_HOSTNAMES[$i]}:/tmp/" "$HADOOP_USER" "$HADOOP_PASSWORD"
+    # 解压到 /usr/local 并设置权限
+    exec_remote "${SLAVE_IPS[$i]}" "
+        sudo tar -xzf /tmp/hadoop.tar.gz -C /usr/local/
+        sudo chown -R $HADOOP_USER:$HADOOP_USER /usr/local/hadoop
+        rm -f /tmp/hadoop.tar.gz
+    " "$HADOOP_USER" "$HADOOP_PASSWORD"
 
-    # 在 Slave 节点解压
-    exec_remote "${SLAVE_IPS[$i]}" "cd /tmp && tar -zxf hadoop.tar.gz && sudo mv hadoop /usr/local/ && sudo chown -R $HADOOP_USER:$HADOOP_USER /usr/local/hadoop" "$HADOOP_USER" "$HADOOP_PASSWORD"
-
-    # 配置环境变量
+    # 配置环境变量（如果尚未配置）
     exec_remote "${SLAVE_IPS[$i]}" "grep -q 'HADOOP_HOME' ~/.bashrc || cat >> ~/.bashrc << 'ENVEOF'
 export JAVA_HOME=/usr/lib/jvm/jdk-17.0.12-oracle-x64
 export HADOOP_HOME=/usr/local/hadoop
@@ -823,9 +867,13 @@ export PATH=\$PATH:\$HADOOP_HOME/bin:\$HADOOP_HOME/sbin
 export HADOOP_CONF_DIR=\$HADOOP_HOME/etc/hadoop
 ENVEOF
 " "$HADOOP_USER" "$HADOOP_PASSWORD"
+    exec_remote "${SLAVE_IPS[$i]}" "source ~/.bashrc" "$HADOOP_USER" "$HADOOP_PASSWORD"
 
     echo ""
   done
+
+  # 删除 Master 上的临时压缩包
+  rm -f /tmp/hadoop.tar.gz
 
   print_success "Hadoop 分发完成"
 }
