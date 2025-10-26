@@ -84,21 +84,10 @@ copy_to_remote() {
 
 # 询问用户选择
 ask_user_choice() {
-  local prompt=$1
-  local default=${2:-"skip"}
-
   echo -e "${YELLOW}$prompt${NC}"
   echo "  1) 重新安装 (reinstall)"
   echo "  2) 跳过此步骤 (skip)"
   echo "  3) 退出脚本，手动调试 (exit)"
-  echo -n "请选择 [1/2/3] (默认: 2): "
-  read -r choice
-
-  case "$choice" in
-  1) echo "reinstall" ;;
-  3) echo "exit" ;;
-  *) echo "skip" ;;
-  esac
 }
 
 # 显示进度条
@@ -237,7 +226,24 @@ configure_single_node() {
 
   if [[ "$user_exists" == "yes" ]]; then
     print_success "$node_label hadoop 用户已存在"
-    local choice=$(ask_user_choice "$node_label hadoop用户已存在，是否重新配置?")
+
+    # 先调用函数显示提示信息
+    ask_user_choice "$node_label hadoop 用户已存在，是否重新配置?"
+
+    # 读取用户输入到本地变量
+    echo -n "请输入选择 [1/2/3] (默认 2): "
+    read -r user_input
+    user_input=${user_input:-2} # 默认选择 2（跳过）
+
+    # 根据数字设置动作
+    case "$user_input" in
+    1) choice="reinstall" ;;
+    2) choice="skip" ;;
+    3) choice="exit" ;;
+    *) choice="skip" ;; # 其他输入也默认跳过
+    esac
+
+    # 根据 choice 执行操作
     case "$choice" in
     "exit")
       print_warning "用户选择退出"
@@ -257,7 +263,6 @@ configure_single_node() {
     exec_remote "$node_ip" "sudo useradd -m -s /bin/bash '$HADOOP_USER'" "$CURRENT_USER" "$CURRENT_USER_PASSWORD"
     exec_remote "$node_ip" "echo '$HADOOP_USER:$HADOOP_PASSWORD' | sudo chpasswd" "$CURRENT_USER" "$CURRENT_USER_PASSWORD"
     exec_remote "$node_ip" "sudo usermod -aG sudo '$HADOOP_USER'" "$CURRENT_USER" "$CURRENT_USER_PASSWORD"
-    exec_remote "$node_ip" "sudo chmod 0440 /etc/sudoers.d/$HADOOP_USER" "$CURRENT_USER" "$CURRENT_USER_PASSWORD"
     print_success "$node_label hadoop 用户创建完成"
   fi
 
@@ -316,7 +321,24 @@ configure_single_node() {
 
   if [[ "$jdk_installed" == "yes" ]]; then
     print_success "$node_label JDK 17.0.12 已安装"
-    local choice=$(ask_user_choice "$node_label JDK已安装，是否重新安装?")
+
+    # 调用函数显示提示信息
+    ask_user_choice "$node_label JDK已安装，是否重新安装?"
+
+    # 读取用户输入到本地变量
+    echo -n "请输入选择 [1/2/3] (默认 2): "
+    read -r user_input
+    user_input=${user_input:-2} # 默认选择 2（跳过）
+
+    # 数字映射成动作
+    case "$user_input" in
+    1) choice="reinstall" ;;
+    2) choice="skip" ;;
+    3) choice="exit" ;;
+    *) choice="skip" ;; # 其他输入默认跳过
+    esac
+
+    # 执行动作
     case "$choice" in
     "exit")
       print_warning "用户选择退出"
@@ -369,8 +391,25 @@ configure_single_node() {
 
   if [[ "$hadoop_installed" == "yes" ]]; then
     print_success "$node_label Hadoop 已安装"
+
     if [[ "$is_master" != "true" ]]; then
-      local choice=$(ask_user_choice "$node_label Hadoop已安装，是否重新安装?")
+      # 调用函数显示提示信息
+      ask_user_choice "$node_label Hadoop已安装，是否重新安装?"
+
+      # 本地读取用户输入
+      echo -n "请输入选择 [1/2/3] (默认 2): "
+      read -r user_input
+      user_input=${user_input:-2} # 默认选择 2（跳过）
+
+      # 数字映射成动作
+      case "$user_input" in
+      1) choice="reinstall" ;;
+      2) choice="skip" ;;
+      3) choice="exit" ;;
+      *) choice="skip" ;; # 其他输入默认跳过
+      esac
+
+      # 执行动作
       case "$choice" in
       "exit")
         print_warning "用户选择退出"
@@ -436,17 +475,27 @@ configure_hosts_file() {
   local total_nodes=$((SLAVE_COUNT + 1))
   local current=0
 
-  # 更新Master节点
+  # 更新 Master 节点
   current=$((current + 1))
   show_progress $current $total_nodes "更新 Master 节点 hosts"
-  exec_remote "$MASTER_IP" "echo '$hosts_content' | sudo tee /etc/hosts > /dev/null" "$CURRENT_USER" "$CURRENT_USER_PASSWORD"
+  exec_remote "$MASTER_IP" "
+        tmp_file=\$(mktemp)
+        echo \"$hosts_content\" > \$tmp_file
+        sudo mv \$tmp_file /etc/hosts
+        sudo chmod 644 /etc/hosts
+    " "$CURRENT_USER" "$CURRENT_USER_PASSWORD"
   echo ""
 
-  # 更新所有Slave节点
+  # 更新所有 Slave 节点
   for i in $(seq 0 $((SLAVE_COUNT - 1))); do
     current=$((current + 1))
     show_progress $current $total_nodes "更新 ${SLAVE_HOSTNAMES[$i]} hosts"
-    exec_remote "${SLAVE_IPS[$i]}" "echo '$hosts_content' | sudo tee /etc/hosts > /dev/null" "$CURRENT_USER" "$CURRENT_USER_PASSWORD"
+    exec_remote "${SLAVE_IPS[$i]}" "
+            tmp_file=\$(mktemp)
+            echo \"$hosts_content\" > \$tmp_file
+            sudo mv \$tmp_file /etc/hosts
+            sudo chmod 644 /etc/hosts
+        " "$CURRENT_USER" "$CURRENT_USER_PASSWORD"
     echo ""
   done
 
@@ -510,7 +559,24 @@ install_hadoop() {
 
   if [[ "$hadoop_installed" == "yes" ]]; then
     echo ""
-    local choice=$(ask_user_choice "Master节点已安装Hadoop，是否重新安装?")
+
+    # 调用函数显示提示信息
+    ask_user_choice "Master节点已安装Hadoop，是否重新安装?"
+
+    # 本地读取用户输入
+    echo -n "请输入选择 [1/2/3] (默认 2): "
+    read -r user_input
+    user_input=${user_input:-2} # 默认选择 2（跳过）
+
+    # 数字映射成动作
+    case "$user_input" in
+    1) choice="reinstall" ;;
+    2) choice="skip" ;;
+    3) choice="exit" ;;
+    *) choice="skip" ;; # 其他输入默认跳过
+    esac
+
+    # 执行动作
     case "$choice" in
     "exit")
       print_warning "用户选择退出"
@@ -779,7 +845,24 @@ start_cluster() {
   if [[ "$namenode_formatted" == "yes" ]]; then
     echo ""
     print_warning "检测到 NameNode 已经格式化过"
-    local choice=$(ask_user_choice "NameNode已格式化，是否重新格式化? (重新格式化会清空HDFS数据!)")
+
+    # 显示提示
+    ask_user_choice "NameNode已格式化，是否重新格式化? (重新格式化会清空HDFS数据!)"
+
+    # 本地读取用户输入
+    echo -n "请输入选择 [1/2/3] (默认 2): "
+    read -r user_input
+    user_input=${user_input:-2} # 默认选择 2（跳过）
+
+    # 数字映射成动作
+    case "$user_input" in
+    1) choice="reinstall" ;;
+    2) choice="skip" ;;
+    3) choice="exit" ;;
+    *) choice="skip" ;;
+    esac
+
+    # 执行动作
     case "$choice" in
     "exit")
       print_warning "用户选择退出"
